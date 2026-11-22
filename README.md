@@ -13,6 +13,22 @@ It runs in two modes:
   you in with your Kroger account. Use it from claude.ai and the Claude mobile apps. See
   [Remote mode](#remote-mode-always-on-http).
 
+## Examples
+
+**Find nearby stores and set a default.** Ask for Krogers near you, then pick one as your default
+store for prices and stock.
+
+![Asking for nearby Kroger stores and setting one as the default store](assets/example-01.gif)
+
+**Find aisles for several products at once.**
+
+![Looking up the aisle locations of multiple products at the default store](assets/example-02.gif)
+
+**Plan a meal and add it to your cart.** The assistant plans the meal, finds each ingredient at your
+store, and adds everything to your Kroger cart.
+
+![Planning a full meal and adding all the ingredients to the Kroger cart](assets/example-03.gif)
+
 ## Quick start: let your AI agent set it up
 
 Paste this into an AI agent that can run terminal commands, such as Claude Code, Codex, Cursor, or
