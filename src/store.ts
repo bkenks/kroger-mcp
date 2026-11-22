@@ -19,6 +19,8 @@ export class JsonStore {
 
   async write(name: string, data: unknown): Promise<void> {
     await mkdir(this.dir, { recursive: true, mode: 0o700 });
+    // mkdir's mode only applies on create; keep a pre-existing data dir private too (best effort).
+    await chmod(this.dir, 0o700).catch(() => {});
     const path = this.path(name);
     await writeFile(path, JSON.stringify(data, null, 2) + "\n", { mode: 0o600 });
     // writeFile's mode only applies on create; tighten pre-existing files too.

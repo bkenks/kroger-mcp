@@ -1,12 +1,16 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
+/** Where Kroger API credentials came from. */
+export type CredentialsSource = "environment" | "credentials-file";
+
 export interface Config {
   clientId: string;
   clientSecret: string;
+  credentialsSource: CredentialsSource;
   redirectUri: string;
   /** Base URL for REST endpoints, e.g. https://api.kroger.com/v1 */
   apiBase: string;
@@ -14,7 +18,13 @@ export interface Config {
   defaultLocationId?: string;
 }
 
-const API_BASES = {
+/** Absolute path of the CLI entry point (dist/index.js), for MCP client configs and messages. */
+export const ENTRY_PATH = fileURLToPath(new URL("./index.js", import.meta.url));
+
+/** Store key (in the data dir) for credentials saved by `kroger-mcp setup`. */
+export const CREDENTIALS_KEY = "credentials";
+
+export const API_BASES = {
   prod: "https://api.kroger.com/v1",
   cert: "https://api-ce.kroger.com/v1",
 } as const;
@@ -26,49 +36,89 @@ const optional = z
   .transform((v) => (v?.trim() ? v.trim() : undefined));
 
 const EnvSchema = z.object({
-  KROGER_CLIENT_ID: z.string().trim().min(1, "KROGER_CLIENT_ID is required"),
-  KROGER_CLIENT_SECRET: z.string().trim().min(1, "KROGER_CLIENT_SECRET is required"),
+  KROGER_CLIENT_ID: optional,
+  KROGER_CLIENT_SECRET: optional,
   KROGER_REDIRECT_URI: optional,
-  KROGER_ENV: optional.pipe(z.enum(["prod", "cert"]).optional()),
+  KROGER_ENV: optional.pipe(z.enum(["prod", "cert"], { message: 'KROGER_ENV must be "prod" or "cert"' }).optional()),
   KROGER_LOCATION_ID: optional,
   KROGER_MCP_DATA_DIR: optional,
 });
+
+export class MissingCredentialsError extends Error {
+  constructor() {
+    super(
+      "Kroger API credentials are not configured. Run `node " +
+        ENTRY_PATH +
+        " setup` in a terminal to add them, or set KROGER_CLIENT_ID and KROGER_CLIENT_SECRET.",
+    );
+    this.name = "MissingCredentialsError";
+  }
+}
 
 /**
  * Load a .env file from the project root (next to package.json) if present.
  * MCP clients launch servers from arbitrary working directories, so the cwd is
  * also checked but the project root is preferred. Existing env vars win.
+ * Returns the path loaded, if any.
  */
-export function loadDotEnv(): void {
+export function loadDotEnv(): string | undefined {
   const projectRoot = fileURLToPath(new URL("..", import.meta.url));
   for (const path of [join(projectRoot, ".env"), join(process.cwd(), ".env")]) {
     if (existsSync(path)) {
       process.loadEnvFile(path);
-      return;
+      return path;
     }
   }
+  return undefined;
+}
+
+export function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
+  const configHome = env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return env.KROGER_MCP_DATA_DIR?.trim() || join(configHome, "kroger-mcp");
+}
+
+/** Read credentials saved by `kroger-mcp setup` (sync, since config loads at startup). */
+export function readCredentialsFile(dataDir: string): { clientId: string; clientSecret: string } | undefined {
+  try {
+    const data = JSON.parse(readFileSync(join(dataDir, `${CREDENTIALS_KEY}.json`), "utf8"));
+    if (typeof data?.clientId === "string" && typeof data?.clientSecret === "string" && data.clientId && data.clientSecret) {
+      return { clientId: data.clientId, clientSecret: data.clientSecret };
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`Could not read Kroger credentials file in ${dataDir}: ${(err as Error).message}`);
+    }
+  }
+  return undefined;
 }
 
 /**
+ * Credentials come from KROGER_CLIENT_ID/KROGER_CLIENT_SECRET (environment or .env) if both are set,
+ * otherwise from the credentials file written by `kroger-mcp setup`.
  * @param opts.redirectUri Overrides KROGER_REDIRECT_URI; HTTP mode derives it from MCP_PUBLIC_URL.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, opts: { redirectUri?: string } = {}): Config {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
-    const problems = parsed.error.issues.map((i) => i.message).join("; ");
-    throw new Error(
-      `Invalid Kroger MCP configuration: ${problems}. ` +
-        "Set the variables in the environment or in a .env file (see .env.example).",
-    );
+    throw new Error(`Invalid Kroger MCP configuration: ${parsed.error.issues.map((i) => i.message).join("; ")}.`);
   }
   const e = parsed.data;
-  const configHome = env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const dataDir = resolveDataDir(env);
+
+  let credentials: { clientId: string; clientSecret: string; credentialsSource: CredentialsSource } | undefined;
+  if (e.KROGER_CLIENT_ID && e.KROGER_CLIENT_SECRET) {
+    credentials = { clientId: e.KROGER_CLIENT_ID, clientSecret: e.KROGER_CLIENT_SECRET, credentialsSource: "environment" };
+  } else {
+    const saved = readCredentialsFile(dataDir);
+    if (saved) credentials = { ...saved, credentialsSource: "credentials-file" };
+  }
+  if (!credentials) throw new MissingCredentialsError();
+
   return {
-    clientId: e.KROGER_CLIENT_ID,
-    clientSecret: e.KROGER_CLIENT_SECRET,
+    ...credentials,
     redirectUri: opts.redirectUri ?? e.KROGER_REDIRECT_URI ?? "http://localhost:8000/callback",
     apiBase: API_BASES[e.KROGER_ENV ?? "prod"],
-    dataDir: e.KROGER_MCP_DATA_DIR ?? join(configHome, "kroger-mcp"),
+    dataDir,
     defaultLocationId: e.KROGER_LOCATION_ID,
   };
 }

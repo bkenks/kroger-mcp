@@ -1,18 +1,21 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { openBrowser } from "./browser.js";
 import { loadConfig, loadDotEnv, loadHttpConfig } from "./config.js";
 import { KROGER_CALLBACK_PATH, remoteLoginFlow, startHttpServer } from "./http/app.js";
 import { createDeps, createServer } from "./server.js";
+import { runSetup } from "./setup.js";
+import { collectStatus } from "./status.js";
 
 const USAGE = `Usage: kroger-mcp [command]
 
 Commands:
   (none)   Start the MCP server on stdio (launched on demand by an MCP client)
-  serve    Start an always-on remote MCP server over HTTP with OAuth (see README)
+  setup    Interactive first-time setup: save API credentials, log in, pick a store
+  status   Print a JSON setup report: install paths, credentials, login, next steps
   auth     Log in to your Kroger account in the browser (enables cart tools)
   logout   Delete saved Kroger account tokens
-  status   Show login status and Kroger profile ID`;
+  serve    Start an always-on remote MCP server over HTTP with OAuth (see README)`;
 
 async function main() {
   const command = process.argv[2];
@@ -21,8 +24,13 @@ async function main() {
     return;
   }
 
-  loadDotEnv();
+  const envFile = loadDotEnv();
   if (command === "serve") return serve();
+  if (command === "setup") return runSetup();
+  if (command === "status") {
+    console.log(JSON.stringify(await collectStatus(process.env, envFile), null, 2));
+    return;
+  }
   const deps = createDeps(loadConfig());
 
   switch (command) {
@@ -45,13 +53,6 @@ async function main() {
       await deps.tokens.logout();
       console.log("Logged out.");
       return;
-    case "status": {
-      const status = await deps.tokens.userStatus();
-      // The profile ID is what KROGER_ALLOWED_PROFILE_ID expects in serve mode.
-      const profileId = status.loggedIn ? (await deps.client.getProfile()).data.id : undefined;
-      console.log(JSON.stringify({ ...status, ...(profileId && { profileId }) }, null, 2));
-      return;
-    }
     default:
       console.error(`Unknown command: ${command}\n\n${USAGE}`);
       process.exitCode = 2;
@@ -81,22 +82,6 @@ async function serve() {
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-}
-
-function openBrowser(url: string) {
-  const [cmd, args] =
-    process.platform === "darwin"
-      ? ["open", [url]]
-      : process.platform === "win32"
-        ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
-        : ["xdg-open", [url]];
-  try {
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
-    child.on("error", () => {}); // no browser available; the URL is printed anyway
-    child.unref();
-  } catch {
-    // ignore
-  }
 }
 
 main().catch((err) => {

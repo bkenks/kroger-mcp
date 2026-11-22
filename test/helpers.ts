@@ -48,6 +48,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
   return {
     clientId: "client-id",
     clientSecret: "client-secret",
+    credentialsSource: "environment",
     redirectUri: "http://localhost:8000/callback",
     apiBase: "https://api.kroger.com/v1",
     dataDir: mkdtempSync(join(tmpdir(), "kroger-mcp-test-")),

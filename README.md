@@ -13,6 +13,25 @@ It runs in two modes:
   you in with your Kroger account. Use it from claude.ai and the Claude mobile apps. See
   [Remote mode](#remote-mode-always-on-http).
 
+## Quick start: let your AI agent set it up
+
+Paste this into an AI agent that can run terminal commands, such as Claude Code, Codex, Cursor, or
+Gemini CLI:
+
+```text
+Install and set up the Kroger MCP server for me by following the instructions at
+https://raw.githubusercontent.com/bkenks/kroger-mcp/main/AGENT_INSTALL.md
+```
+
+The agent will:
+- install the server;
+- walk you through creating a free Kroger developer app;
+- have you run a short interactive `setup` in your own terminal, so your Client Secret never goes
+  through the chat;
+- register the server with your AI app.
+
+[`AGENT_INSTALL.md`](AGENT_INSTALL.md) is the exact guide it follows.
+
 ## Tools
 
 | Tool | What it does | Needs login |
@@ -32,67 +51,82 @@ Prices, stock, and aisles are store-specific. They only appear once a store is c
 `set_preferred_location`, the `locationId` argument, or `KROGER_LOCATION_ID`. The Kroger API can **add** to
 the cart but cannot read or remove cart items, so review your cart at kroger.com.
 
-## Setup
+## Manual setup
 
-1. **Create a Kroger app** at <https://developer.kroger.com>, under *Manage → Applications*:
+1. **Install** to `~/.local/share/kroger-mcp`. Re-run the same command to update.
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/bkenks/kroger-mcp/main/install.sh | bash
+   ```
+   Or clone the repo anywhere and run `npm ci --ignore-scripts && npm run build`.
+2. **Create a Kroger app** at <https://developer.kroger.com>, under *Manage → Applications*:
    - Turn on the **Products**, **Locations**, **Cart**, and **Identity** APIs.
-   - Add the redirect URI **`http://localhost:8000/callback`**. It must match exactly. To use a different
-     port, register that URI and set `KROGER_REDIRECT_URI` to it.
-2. **Configure credentials.** Copy `.env.example` to `.env` and fill in `KROGER_CLIENT_ID` and
-   `KROGER_CLIENT_SECRET`. The server reads `.env` from the project directory no matter where the MCP
-   client launches it from. Variables already set in the environment take precedence.
-3. **Build:**
+   - Add the redirect URI **`http://localhost:8000/callback`**. It must match exactly.
+3. **Run setup** in your terminal:
    ```sh
-   npm install
-   npm run build
+   node ~/.local/share/kroger-mcp/dist/index.js setup
    ```
-4. **Log in (optional, for cart tools).** Either ask the assistant to call `kroger_login`, or run:
-   ```sh
-   npm run auth        # opens the browser and waits for the redirect
-   ```
-   Tokens are stored in `~/.config/kroger-mcp/tokens.json` with `0600` permissions and refresh
-   automatically.
+   It asks for your Client ID and Client Secret (hidden input) and checks them with Kroger. It saves them
+   to `~/.config/kroger-mcp/credentials.json`, which only your user can read. Then it logs you in to
+   Kroger for the cart tools and lets you pick a default store. Your Kroger login is stored next to the
+   credentials and refreshes automatically.
+4. **Register the server with your AI app.** Run `node ~/.local/share/kroger-mcp/dist/index.js status`
+   for a JSON report. It includes the exact command to register (`install.mcpServer`), what's configured,
+   and any remaining steps.
+
+### Where credentials can live
+
+In order of precedence:
+1. `KROGER_CLIENT_ID` / `KROGER_CLIENT_SECRET` environment variables;
+2. a `.env` file in the install directory (see `.env.example`);
+3. the file written by `setup`.
+
+The `setup` file is the recommended option. It stays out of the repo and out of your AI app's config,
+which may be synced or readable by the AI. It's protected the same way as the Kroger login tokens.
 
 ## Connect to a client
 
+Use the absolute paths from `status`. Using `node` from `PATH` may fail in GUI apps, or with version
+managers like mise or nvm.
+
 **Claude Code**
 ```sh
-claude mcp add kroger -- node /absolute/path/to/kroger-mcp/dist/index.js
+claude mcp add --scope user kroger -- /absolute/path/to/node /absolute/path/to/kroger-mcp/dist/index.js
 ```
 
-**Claude Desktop** (`claude_desktop_config.json`)
+**Claude Desktop** (`claude_desktop_config.json`), Cursor (`~/.cursor/mcp.json`), and most other clients:
 ```json
 {
   "mcpServers": {
     "kroger": {
-      "command": "node",
+      "command": "/absolute/path/to/node",
       "args": ["/absolute/path/to/kroger-mcp/dist/index.js"]
     }
   }
 }
 ```
 
-You can also pass `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` through the client's `env` block
-instead of using a `.env` file.
+[`AGENT_INSTALL.md`](AGENT_INSTALL.md#step-5-register-the-server-with-the-users-mcp-client) covers
+more clients. Don't put credentials in these configs.
 
 ## Configuration
 
 | Variable | Default | |
 |---|---|---|
-| `KROGER_CLIENT_ID` / `KROGER_CLIENT_SECRET` | (required) | From your Kroger app |
+| `KROGER_CLIENT_ID` / `KROGER_CLIENT_SECRET` | from `setup` | Override the credentials saved by `setup` |
 | `KROGER_REDIRECT_URI` | `http://localhost:8000/callback` | Must be `http://localhost…` and registered on the app |
 | `KROGER_ENV` | `prod` | `cert` uses Kroger's certification environment |
 | `KROGER_LOCATION_ID` | (none) | Fallback store when no preferred location is saved |
-| `KROGER_MCP_DATA_DIR` | `~/.config/kroger-mcp` | Where tokens and preferences are kept |
+| `KROGER_MCP_DATA_DIR` | `~/.config/kroger-mcp` | Where credentials, tokens, and preferences are kept |
 
 ## CLI
 
 ```
 node dist/index.js           # run the MCP server on stdio
+node dist/index.js setup     # interactive setup: credentials, Kroger login, default store
+node dist/index.js status    # JSON setup report: paths, credentials, login, next steps
+node dist/index.js auth      # Kroger browser login only
+node dist/index.js logout    # delete the saved Kroger login
 node dist/index.js serve     # run the remote HTTP server (see Remote mode)
-node dist/index.js auth      # browser login
-node dist/index.js status    # show login status and your Kroger profile ID
-node dist/index.js logout    # delete saved tokens
 ```
 
 ## Remote mode (always-on HTTP)
