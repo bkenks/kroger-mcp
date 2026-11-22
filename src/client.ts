@@ -6,7 +6,8 @@ import type { KrogerChain, KrogerDepartment, KrogerLocation, KrogerProduct } fro
 type Query = Record<string, string | number | boolean | undefined>;
 
 interface RequestOptions {
-  auth: "app" | "user";
+  /** Which token to send; `{ token }` uses an explicit user token without refresh. */
+  auth: "app" | "user" | { token: string };
   query?: Query;
   body?: unknown;
 }
@@ -107,8 +108,11 @@ export class KrogerClient {
     });
   }
 
-  getProfile() {
-    return this.request<{ data: { id: string } }>("GET", "/identity/profile", { auth: "user" });
+  /** Profile of the saved login, or of `accessToken` if given (to identify a login before saving it). */
+  getProfile(accessToken?: string) {
+    return this.request<{ data: { id: string } }>("GET", "/identity/profile", {
+      auth: accessToken ? { token: accessToken } : "user",
+    });
   }
 
   async request<T>(method: string, path: string, opts: RequestOptions): Promise<T> {
@@ -119,9 +123,11 @@ export class KrogerClient {
 
     const send = async (forceRefresh: boolean) => {
       const token =
-        opts.auth === "app"
-          ? await this.tokens.getAppToken(forceRefresh)
-          : await this.tokens.getUserToken(forceRefresh);
+        typeof opts.auth === "object"
+          ? opts.auth.token
+          : opts.auth === "app"
+            ? await this.tokens.getAppToken(forceRefresh)
+            : await this.tokens.getUserToken(forceRefresh);
       return this.fetchFn(url, {
         method,
         headers: {
@@ -135,7 +141,7 @@ export class KrogerClient {
 
     let res = await send(false);
     // A 401 usually means the token was revoked or expired early; refresh once and retry.
-    if (res.status === 401) res = await send(true);
+    if (res.status === 401 && typeof opts.auth !== "object") res = await send(true);
 
     const text = await res.text();
     let body: unknown = undefined;
@@ -151,7 +157,7 @@ export class KrogerClient {
       const detail = describeErrorBody(body) ?? res.statusText;
       let message = `Kroger API ${method} ${path} failed with ${res.status}: ${detail}`;
       if (res.status === 429) message += " (rate limit reached; Kroger limits calls per day per endpoint)";
-      if (res.status === 403 && opts.auth === "user") {
+      if (res.status === 403 && opts.auth !== "app") {
         message += " (the login may be missing a required scope; try kroger_login again)";
       }
       throw new KrogerApiError(res.status, message, body);

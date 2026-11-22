@@ -1,0 +1,17 @@
+# docker compose up -d --build
+# Reads KROGER_CLIENT_ID, KROGER_CLIENT_SECRET, MCP_PUBLIC_URL, etc. from .env next to this file.
+services:
+  kroger-mcp:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?set MCP_PUBLIC_URL in .env, e.g. https://kroger.example.com}
+    ports:
+      # Only reachable from this host; put a reverse proxy or Cloudflare Tunnel in front for HTTPS.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - kroger-data:/data
+
+volumes:
+  kroger-data:

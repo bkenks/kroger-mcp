@@ -7,7 +7,7 @@ import { JsonStore } from "./store.js";
 import { registerAccountTools } from "./tools/account.js";
 import { registerLocationTools } from "./tools/locations.js";
 import { registerProductTools } from "./tools/products.js";
-import type { Deps } from "./tools/shared.js";
+import type { Deps, LoginFlow } from "./tools/shared.js";
 
 export const SERVER_VERSION = "0.1.0";
 
@@ -19,6 +19,22 @@ export function createDeps(config: Config, fetchFn: FetchFn = fetch): Deps {
     tokens,
     client: new KrogerClient(config, tokens, fetchFn),
     prefs: new Preferences(store, config.defaultLocationId),
+    login: localLoginFlow(tokens, config),
+  };
+}
+
+/** stdio mode: a one-shot listener on the localhost redirect URI receives the Kroger callback. */
+function localLoginFlow(tokens: TokenManager, config: Config): LoginFlow {
+  return {
+    async start() {
+      const { url } = await tokens.startLogin();
+      return {
+        loginUrl: url,
+        instructions:
+          "Ask the user to open loginUrl, sign in to their Kroger account, and approve access. They will be " +
+          `redirected to ${config.redirectUri}, which this server is listening on. The link is valid for 10 minutes.`,
+      };
+    },
   };
 }
 

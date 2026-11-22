@@ -1,0 +1,20 @@
+# systemd user service for remote (HTTP) mode.
+#   cp deploy/kroger-mcp.service ~/.config/systemd/user/
+#   (edit the paths below)
+#   systemctl --user daemon-reload && systemctl --user enable --now kroger-mcp
+#   loginctl enable-linger "$USER"   # keep it running while you're logged out
+# Settings come from the project's .env (MCP_PUBLIC_URL, credentials, ...).
+[Unit]
+Description=Kroger MCP server (remote HTTP mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/projects/kroger-mcp
+# Use an absolute node path; systemd doesn't load version managers like mise/nvm (see `which node`).
+ExecStart=/usr/local/bin/node dist/index.js serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

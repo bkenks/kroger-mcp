@@ -4,11 +4,17 @@ import type { KrogerClient } from "../client.js";
 import type { Config } from "../config.js";
 import type { Preferences } from "../preferences.js";
 
+/** How the kroger_login tool connects a Kroger account; differs between stdio and HTTP mode. */
+export interface LoginFlow {
+  start(): Promise<{ loginUrl: string; instructions: string }>;
+}
+
 export interface Deps {
   config: Config;
   client: KrogerClient;
   tokens: TokenManager;
   prefs: Preferences;
+  login: LoginFlow;
 }
 
 export function json(data: unknown): CallToolResult {

@@ -5,6 +5,14 @@ It lets an assistant find stores, search products with live store prices, stock,
 items to your Kroger cart. It covers every Kroger-family banner: Kroger, Ralphs, Fred Meyer, King Soopers,
 Harris Teeter, Smith's, Fry's, QFC, and the rest.
 
+It runs in two modes:
+
+- **Local (stdio)**, the default. Your MCP client (Claude Code or Desktop) starts the server on demand
+  as a subprocess. No network exposure; setup is below.
+- **Remote (HTTP)**, via `kroger-mcp serve`. An always-on server at a URL, protected by OAuth that signs
+  you in with your Kroger account. Use it from claude.ai and the Claude mobile apps. See
+  [Remote mode](#remote-mode-always-on-http).
+
 ## Tools
 
 | Tool | What it does | Needs login |
@@ -81,10 +89,94 @@ instead of using a `.env` file.
 
 ```
 node dist/index.js           # run the MCP server on stdio
+node dist/index.js serve     # run the remote HTTP server (see Remote mode)
 node dist/index.js auth      # browser login
-node dist/index.js status    # show login status
+node dist/index.js status    # show login status and your Kroger profile ID
 node dist/index.js logout    # delete saved tokens
 ```
+
+## Remote mode (always-on HTTP)
+
+`kroger-mcp serve` runs the same tools over
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) at
+`$MCP_PUBLIC_URL/mcp`. It acts as its own OAuth server, so claude.ai, the mobile apps, and Claude Code
+can connect with a normal sign-in flow.
+
+### How sign-in works
+
+1. A client (for example a claude.ai custom connector) registers itself and opens `/authorize`.
+2. The server shows a **consent page** naming the app and where it will be redirected. Approve only
+   if you just started connecting that app.
+3. You're sent to **Kroger's login**. When you come back, the server checks the Kroger profile ID.
+   Only the owner's account is accepted, and any other account is refused before anything is saved.
+4. Your Kroger login is saved for the cart tools, and the client receives its own access token
+   (valid 1 hour and refreshed automatically; refresh tokens rotate on use and expire after 90 days unused).
+
+The **owner** is `KROGER_ALLOWED_PROFILE_ID` if set. Otherwise it's the account of the Kroger login
+already saved in the data directory, for example from `kroger-mcp auth`. If neither exists, sign-in is
+refused and the error page shows the profile ID to put in `KROGER_ALLOWED_PROFILE_ID`. To print your
+ID, run `node dist/index.js status`.
+
+The server keeps only SHA-256 hashes of the tokens it issues. Its own files (`oauth-clients.json`,
+`oauth-tokens.json`, `owner.json`) sit next to the Kroger login in the data directory.
+
+### Setup
+
+1. **Pick a public HTTPS hostname**, for example `https://kroger.example.com`, and put it in `.env`:
+   ```sh
+   MCP_PUBLIC_URL=https://kroger.example.com
+   ```
+2. **Register a second redirect URI** on your Kroger app: `https://kroger.example.com/kroger/callback`.
+   Keep the localhost one too if you still use local mode.
+3. **Run it** with one of the options below. It listens on `127.0.0.1:3000` by default.
+4. **Expose it over HTTPS.** OAuth clients require HTTPS, and the server trusts reverse proxies on
+   loopback and private networks by default.
+   - **Cloudflare Tunnel** (no open ports): route a tunnel hostname to `http://localhost:3000`.
+   - **Caddy**: `kroger.example.com { reverse_proxy localhost:3000 }`. TLS is automatic.
+   - **nginx or Traefik**: proxy to `localhost:3000`, forwarding `Host` and `X-Forwarded-For`.
+5. **Connect a client:**
+   - **claude.ai or the mobile apps:** go to *Settings → Connectors → Add custom connector* and enter
+     `https://kroger.example.com/mcp`. Then follow the consent page and Kroger sign-in.
+   - **Claude Code:** run `claude mcp add --transport http kroger-remote https://kroger.example.com/mcp`,
+     then run `/mcp` inside Claude Code to authenticate.
+
+### Running it
+
+**systemd (this host).** This shares the data directory with local mode, so your existing Kroger
+login is reused and becomes the owner automatically.
+```sh
+npm run build
+cp deploy/kroger-mcp.service ~/.config/systemd/user/   # then edit the node path inside
+systemctl --user daemon-reload && systemctl --user enable --now kroger-mcp
+loginctl enable-linger "$USER"                          # keep running while logged out
+journalctl --user -u kroger-mcp -f                       # logs
+```
+
+**Docker.** The data is kept in the `kroger-data` volume, which starts empty, so set
+`KROGER_ALLOWED_PROFILE_ID` in `.env`.
+```sh
+docker compose up -d --build
+```
+
+**Other hosts (VPS, Fly.io, Railway, ...).** Build the `Dockerfile`, mount a persistent volume at
+`/data`, and set the env vars. The platform's `PORT` is honored.
+
+### Remote-mode settings
+
+| Variable | Default | |
+|---|---|---|
+| `MCP_PUBLIC_URL` | (required) | Public origin, `https://` unless localhost, with no path |
+| `MCP_HOST` / `MCP_PORT` | `127.0.0.1` / `3000` | Listen address. `PORT` also works. The Docker image uses `0.0.0.0` |
+| `KROGER_ALLOWED_PROFILE_ID` | owner of the saved login | Only this Kroger account can sign in |
+| `MCP_API_KEY` | (off) | Optional static bearer token (32 or more characters) for scripts and curl: `Authorization: Bearer <key>` |
+| `MCP_TRUST_PROXY` | `loopback, linklocal, uniquelocal` | Express `trust proxy` setting, so rate limits see real client IPs |
+| `MCP_ALLOWED_HOSTS` | (none) | Extra accepted `Host` headers, comma-separated. The public hostname and localhost are always allowed |
+
+Other notes:
+
+- `GET /healthz` is unauthenticated, for health checks.
+- In remote mode, `kroger_login` returns `$MCP_PUBLIC_URL/kroger/login`, which reconnects the Kroger
+  account. It's only needed if Kroger's refresh token ever expires.
 
 ## Development
 

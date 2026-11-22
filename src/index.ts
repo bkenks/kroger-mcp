@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { loadConfig, loadDotEnv } from "./config.js";
+import { loadConfig, loadDotEnv, loadHttpConfig } from "./config.js";
+import { KROGER_CALLBACK_PATH, remoteLoginFlow, startHttpServer } from "./http/app.js";
 import { createDeps, createServer } from "./server.js";
 
 const USAGE = `Usage: kroger-mcp [command]
 
 Commands:
-  (none)   Start the MCP server on stdio
+  (none)   Start the MCP server on stdio (launched on demand by an MCP client)
+  serve    Start an always-on remote MCP server over HTTP with OAuth (see README)
   auth     Log in to your Kroger account in the browser (enables cart tools)
   logout   Delete saved Kroger account tokens
-  status   Show login status`;
+  status   Show login status and Kroger profile ID`;
 
 async function main() {
   const command = process.argv[2];
@@ -20,6 +22,7 @@ async function main() {
   }
 
   loadDotEnv();
+  if (command === "serve") return serve();
   const deps = createDeps(loadConfig());
 
   switch (command) {
@@ -42,13 +45,42 @@ async function main() {
       await deps.tokens.logout();
       console.log("Logged out.");
       return;
-    case "status":
-      console.log(JSON.stringify(await deps.tokens.userStatus(), null, 2));
+    case "status": {
+      const status = await deps.tokens.userStatus();
+      // The profile ID is what KROGER_ALLOWED_PROFILE_ID expects in serve mode.
+      const profileId = status.loggedIn ? (await deps.client.getProfile()).data.id : undefined;
+      console.log(JSON.stringify({ ...status, ...(profileId && { profileId }) }, null, 2));
       return;
+    }
     default:
       console.error(`Unknown command: ${command}\n\n${USAGE}`);
       process.exitCode = 2;
   }
+}
+
+async function serve() {
+  const http = loadHttpConfig();
+  const deps = createDeps(loadConfig(process.env, { redirectUri: http.krogerRedirectUri }));
+  deps.login = remoteLoginFlow(http);
+
+  const server = await startHttpServer(deps, http);
+  console.error(
+    [
+      `Kroger MCP HTTP server listening on http://${http.host}:${http.port}`,
+      `  MCP endpoint:       ${http.mcpUrl.href}`,
+      `  Kroger redirect URI (register it on your Kroger app): ${new URL(KROGER_CALLBACK_PATH, http.publicUrl).href}`,
+      `  Static API key:     ${http.apiKey ? "enabled" : "disabled"}`,
+      `  Allowed account:    ${http.allowedProfileId ?? "owner of the saved Kroger login (if any)"}`,
+    ].join("\n"),
+  );
+
+  const shutdown = () => {
+    console.error("Shutting down...");
+    server.close(() => process.exit(0));
+    server.closeAllConnections();
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 function openBrowser(url: string) {

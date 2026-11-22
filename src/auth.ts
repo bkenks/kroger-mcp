@@ -121,7 +121,16 @@ export class TokenManager {
     return url.toString();
   }
 
+  /** Exchange an authorization code and save the resulting login. */
   async exchangeCode(code: string): Promise<void> {
+    await this.saveUserTokens(await this.exchangeCodeForTokens(code));
+  }
+
+  /**
+   * Exchange an authorization code without saving it, so callers can check
+   * whose account it is first (HTTP mode only accepts the owner's account).
+   */
+  async exchangeCodeForTokens(code: string): Promise<UserTokens> {
     let t: TokenResponse;
     try {
       t = await this.requestToken({
@@ -137,7 +146,7 @@ export class TokenManager {
       }
       throw err;
     }
-    await this.saveUserTokens(this.toUserTokens(t));
+    return this.toUserTokens(t);
   }
 
   /**
@@ -207,7 +216,7 @@ export class TokenManager {
     return this.userTokens;
   }
 
-  private async saveUserTokens(tokens: UserTokens): Promise<void> {
+  async saveUserTokens(tokens: UserTokens): Promise<void> {
     this.userTokens = tokens;
     await this.store.write(USER_TOKENS_KEY, tokens);
   }

@@ -2,26 +2,17 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { type Deps, json } from "./shared.js";
 
-export function registerAccountTools(server: McpServer, { client, tokens, config }: Deps) {
+export function registerAccountTools(server: McpServer, { client, tokens, login }: Deps) {
   server.registerTool(
     "kroger_login",
     {
       title: "Log in to Kroger",
       description:
         "Start the Kroger account login needed for add_to_cart and get_profile. Returns a URL the user must open " +
-        "in a browser on this machine; after they approve, the login completes automatically. Then call auth_status " +
-        "to confirm.",
+        "in a browser; after they approve, the login completes automatically. Then call auth_status to confirm.",
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    async () => {
-      const { url } = await tokens.startLogin();
-      return json({
-        loginUrl: url,
-        instructions:
-          "Ask the user to open loginUrl, sign in to their Kroger account, and approve access. They will be " +
-          `redirected to ${config.redirectUri}, which this server is listening on. The link is valid for 10 minutes.`,
-      });
-    },
+    async () => json(await login.start()),
   );
 
   server.registerTool(
